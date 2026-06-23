@@ -20,3 +20,21 @@ jobs:
       environment: ${{ inputs.environment }}
     secrets: inherit
     vars: inherit
+  bcbs-az-member-portal:
+    if: ${{ fromJSON(inputs.manifest)['bcbs-az-member-portal']['index.docker.io/cloudbeesdemo/bcbs-az-member-portal'].deploy }}
+    uses: shozab-unify-examples/bcbs-az-member-portal/.cloudbees/workflows/deploy.yaml
+    with:
+      artifact-url: ${{ fromJSON(inputs.manifest)['bcbs-az-member-portal']['index.docker.io/cloudbeesdemo/bcbs-az-member-portal'].url }}
+      artifact-id: ${{ fromJSON(inputs.manifest)['bcbs-az-member-portal']['index.docker.io/cloudbeesdemo/bcbs-az-member-portal'].id }}
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+    vars: inherit
+  bcbs-az-eligibility-svc:
+    if: ${{ fromJSON(inputs.manifest)['bcbs-az-eligibility-svc']['index.docker.io/cloudbeesdemo/bcbs-az-eligibility-svc'].deploy }}
+    uses: shozab-unify-examples/bcbs-az-eligibility-svc/.cloudbees/workflows/deploy.yaml
+    with:
+      artifact-url: ${{ fromJSON(inputs.manifest)['bcbs-az-eligibility-svc']['index.docker.io/cloudbeesdemo/bcbs-az-eligibility-svc'].url }}
+      artifact-id: ${{ fromJSON(inputs.manifest)['bcbs-az-eligibility-svc']['index.docker.io/cloudbeesdemo/bcbs-az-eligibility-svc'].id }}
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+    vars: inherit
