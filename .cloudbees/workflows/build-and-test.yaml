@@ -79,8 +79,15 @@ jobs:
             | URL | ${{ steps.create-issue.outputs.issue-url }} |
 
             **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}` | **Run:** #${{ cloudbees.run_number }}
-            **Components:** 1 service, 1 container image
-            **Target environments:** DEV → QA → PROD
+
+            ### 📦 Components in Release
+            | Component | Repository | Image | Target Envs |
+            |-----------|-----------|-------|-------------|
+            | bcbs-az-claims-api | cb-golden-demo-org/hackers-organized-oct | cloudbeesdemo/hackers-organized | DEV → QA → PROD |
+            | bcbs-az-member-portal | shozab-unify-examples/bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | DEV → QA → PROD |
+            | bcbs-az-eligibility-svc | shozab-unify-examples/bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | DEV → QA → PROD |
+
+            **3 services, 3 container images** | **Target environments:** DEV → QA → PROD
           format: MARKDOWN
   quality-gate:
     needs: create-jira-issue
@@ -186,6 +193,13 @@ jobs:
             | Benefit Summary | /api/v1/benefits/{memberId} | GET | 200 | 98ms | ✅ Pass |
 
             **7/7 tests passed** | Avg latency: 81ms | P99: 134ms
+
+            ### 🏗️ Components Deployed to DEV
+            | Component | Image Tag | Status |
+            |-----------|-----------|--------|
+            | bcbs-az-claims-api | cloudbeesdemo/hackers-organized | ✅ Running |
+            | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | ✅ Running |
+            | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | ✅ Running |
           format: MARKDOWN
   run-tests-qa:
     needs: deploy-to-QA
@@ -236,6 +250,13 @@ jobs:
 
             **Pass rate: ${{ steps.run-tests.outputs.pass-rate }}%** (threshold: ≥ 95%) ✅
             Both failures are pre-existing tracked issues — no P1 or P2 blockers.
+
+            ### 🏗️ Components Deployed to QA
+            | Component | Image Tag | Status |
+            |-----------|-----------|--------|
+            | bcbs-az-claims-api | cloudbeesdemo/hackers-organized | ✅ Running |
+            | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | ✅ Running |
+            | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | ✅ Running |
           format: MARKDOWN
   exit-criteria-qa:
     needs: run-tests-qa
@@ -325,14 +346,20 @@ jobs:
 
             **6/6 critical path tests passed** ✅
 
+            ### 🏗️ Components Deployed to PROD
+            | Component | Image Tag | Pods | Error Rate | Status |
+            |-----------|-----------|------|------------|--------|
+            | bcbs-az-claims-api | cloudbeesdemo/hackers-organized | 3/3 | 0.00% | ✅ Healthy |
+            | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | 2/2 | 0.00% | ✅ Healthy |
+            | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | 2/2 | 0.00% | ✅ Healthy |
+
             ### Post-Deploy Health
             | Metric | Value | Status |
             |--------|-------|--------|
-            | Pods Running | 3/3 | ✅ Healthy |
+            | Total Pods Running | 7/7 | ✅ Healthy |
             | Error Rate (1m) | 0.00% | ✅ Normal |
             | Avg Response Time | 67ms | ✅ Normal |
-            | Memory Usage | 412 MB / 1 GB | ✅ Normal |
-            | CPU Usage | 8% | ✅ Normal |
+            | Deployment Downtime | 0 min | ✅ Zero downtime |
           format: MARKDOWN
   publish-release-summary:
     needs:
@@ -354,7 +381,13 @@ jobs:
             | Version | v${{ inputs.sem-ver }} |
             | Run | #${{ cloudbees.run_number }} |
             | Jira Issue | ${{ needs.create-jira-issue.outputs.issue-key }} |
-            | Image | index.docker.io/cloudbeesdemo/hackers-organized |
+
+            ## Components Released
+            | Component | Repository | Image | Deployed To |
+            |-----------|-----------|-------|-------------|
+            | bcbs-az-claims-api | hackers-organized-oct | cloudbeesdemo/hackers-organized | DEV ✅ QA ✅ PROD ✅ |
+            | bcbs-az-member-portal | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | DEV ✅ QA ✅ PROD ✅ |
+            | bcbs-az-eligibility-svc | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | DEV ✅ QA ✅ PROD ✅ |
 
             ## Pipeline Summary
             | Stage | Job | Result | Details |
@@ -362,14 +395,14 @@ jobs:
             | 🔖 Release Readiness | Jira Issue | ✅ | ${{ needs.create-jira-issue.outputs.issue-key }} |
             | 🔖 Release Readiness | Quality Gate | ✅ | 0 critical findings, 84.3% coverage |
             | 🔖 Release Readiness | Tech Lead Approval | ✅ | Approved |
-            | 🧪 DEV | Deploy | ✅ | bcbs-az-dev |
+            | 🧪 DEV | Deploy (3 components) | ✅ | bcbs-az-dev — all pods healthy |
             | 🧪 DEV | Smoke Tests | ✅ | 7/7 passed, avg 81ms |
-            | 🧪 QA | Deploy | ✅ | bcbs-az-qa |
+            | 🧪 QA | Deploy (3 components) | ✅ | bcbs-az-qa — all pods healthy |
             | 🧪 QA | Regression Suite | ✅ | 122/124 (98.4%) |
             | 🧪 QA | Exit Criteria | ✅ | All 7 criteria met |
             | 📋 Pre-Impl | Release Manager Approval | ✅ | Approved |
             | 📋 Pre-Impl | ServiceNow CR | ✅ | Created → Assessed → Authorized → Closed |
-            | 🚀 PROD | Deploy | ✅ | bcbs-az-prod — zero downtime |
+            | 🚀 PROD | Deploy (3 components) | ✅ | bcbs-az-prod — zero downtime |
             | 🚀 PROD | Smoke Tests | ✅ | 6/6 passed, avg 67ms |
 
             ## Quality Metrics
@@ -380,6 +413,8 @@ jobs:
             | QA Pass Rate | 98.4% |
             | PROD P99 Latency | 118ms |
             | Deployment Downtime | 0 minutes |
+            | Components Deployed | 3 |
+            | Total Pods | 7/7 healthy |
           format: MARKDOWN
   deploy-to-dev:
     needs: approval
