@@ -22,7 +22,7 @@ metadata:
         - run-tests-dev
     - name: QA
       jobs:
-        - deploy-to-qa
+        - deploy-to-QA
         - run-tests-qa
         - exit-criteria-qa
     - name: Pre-Impl
@@ -31,7 +31,7 @@ metadata:
         - create-snow-cr
     - name: PROD
       jobs:
-        - deploy-to-prod
+        - deploy-to-Prod
         - run-smoke-tests
     - name: Post-Impl
       jobs:
@@ -101,31 +101,6 @@ jobs:
       disallowLaunchByUser: false
       notifyAllEligibleUsers: false
       approvers: 3ad0577a-e80d-11ea-a794-42010a83ae1a
-  deploy-to-dev:
-    needs: approval
-    steps:
-      - name: Checkout
-        uses: cloudbees-io/checkout@v1
-        with:
-          repository: cb-golden-demo-org/hackers-organized-oct
-      - name: Deploy to DEV
-        kind: deploy
-        uses: docker://alpine:3.20
-        run: |
-          echo "Deploying bcbs-az-claims-api to DEV"
-          echo "Manifest artifact: ${{ fromJSON(inputs.manifest)['bcbs-az-claims-api']['build-and-test'].id }}"
-      - name: Register deployed artifact
-        uses: cloudbees-io/register-deployed-artifact@v2
-        with:
-          artifact-id: ${{ fromJSON(inputs.manifest)['bcbs-az-claims-api']['build-and-test'].id }}
-          target-environment: bcbs-az-dev
-      - name: Publish evidence
-        uses: cloudbees-io/publish-evidence-item@v1
-        with:
-          content: |-
-            ## DEV Deployment Complete
-            Environment: `bcbs-az-dev`
-          format: MARKDOWN
   run-tests-dev:
     needs: deploy-to-dev
     environment: bcbs-az-dev
@@ -142,32 +117,8 @@ jobs:
         with:
           content: "## DEV Smoke Tests: Passed"
           format: MARKDOWN
-  deploy-to-qa:
-    needs: run-tests-dev
-    steps:
-      - name: Checkout
-        uses: cloudbees-io/checkout@v1
-        with:
-          repository: cb-golden-demo-org/hackers-organized-oct
-      - name: Deploy to QA
-        kind: deploy
-        uses: docker://alpine:3.20
-        run: |
-          echo "Deploying bcbs-az-claims-api to QA"
-      - name: Register deployed artifact
-        uses: cloudbees-io/register-deployed-artifact@v2
-        with:
-          artifact-id: ${{ fromJSON(inputs.manifest)['bcbs-az-claims-api']['build-and-test'].id }}
-          target-environment: bcbs-az-qa
-      - name: Publish evidence
-        uses: cloudbees-io/publish-evidence-item@v1
-        with:
-          content: |-
-            ## QA Deployment Complete
-            Environment: `bcbs-az-qa`
-          format: MARKDOWN
   run-tests-qa:
-    needs: deploy-to-qa
+    needs: deploy-to-QA
     environment: bcbs-az-qa
     outputs:
       pass-rate: ${{ steps.run-tests.outputs.pass-rate }}
@@ -246,33 +197,8 @@ jobs:
             | Risk | Low |
             | Status | Approved |
           format: MARKDOWN
-  deploy-to-prod:
-    needs: create-snow-cr
-    steps:
-      - name: Checkout
-        uses: cloudbees-io/checkout@v1
-        with:
-          repository: cb-golden-demo-org/hackers-organized-oct
-      - name: Deploy to PROD
-        kind: deploy
-        uses: docker://alpine:3.20
-        run: |
-          echo "Deploying bcbs-az-claims-api to PRODUCTION"
-          echo "CR: ${{ needs.create-snow-cr.outputs.cr-number }}"
-      - name: Register deployed artifact
-        uses: cloudbees-io/register-deployed-artifact@v2
-        with:
-          artifact-id: ${{ fromJSON(inputs.manifest)['bcbs-az-claims-api']['build-and-test'].id }}
-          target-environment: bcbs-az-prod
-      - name: Publish evidence
-        uses: cloudbees-io/publish-evidence-item@v1
-        with:
-          content: |-
-            ## PROD Deployment Complete
-            CR: ${{ needs.create-snow-cr.outputs.cr-number }}
-          format: MARKDOWN
   run-smoke-tests:
-    needs: deploy-to-prod
+    needs: deploy-to-Prod
     environment: bcbs-az-prod
     steps:
       - name: PROD smoke tests
@@ -287,8 +213,8 @@ jobs:
           format: MARKDOWN
   close-snow-cr:
     needs:
-      - run-smoke-tests
       - create-snow-cr
+      - run-smoke-tests
     steps:
       - name: Close ServiceNow CR
         uses: docker://alpine:3.20
@@ -330,3 +256,24 @@ jobs:
 
             Run #${{ cloudbees.run_number }}
           format: MARKDOWN
+  deploy-to-dev:
+    needs: approval
+    uses: ./.cloudbees/workflows/deployer.yaml
+    with:
+      manifest: ${{ inputs.manifest }}
+      environment: bcbs-az-dev
+    secrets: inherit
+  deploy-to-QA:
+    needs: run-tests-dev
+    uses: ./.cloudbees/workflows/deployer.yaml
+    with:
+      manifest: ${{ inputs.manifest }}
+      environment: bcbs-az-qa
+    secrets: inherit
+  deploy-to-Prod:
+    needs: create-snow-cr
+    uses: ./.cloudbees/workflows/deployer.yaml
+    with:
+      manifest: ${{ inputs.manifest }}
+      environment: bcbs-az-prod
+    secrets: inherit
