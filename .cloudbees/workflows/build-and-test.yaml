@@ -9,6 +9,16 @@ on:
         required: true
         description: |
           System-generated manifest parameter required for application releases. See https://docs.cloudbees.com/docs/cloudbees-platform/latest/applications/releases#manifest
+      app-name:
+        type: string
+        required: true
+        default: bcbs-az-claims-api
+        description: Application name being released
+      sem-ver:
+        type: string
+        required: true
+        default: 1.0.0
+        description: "Semantic version for this release (e.g. 2.4.1)"
 metadata:
   stages/v1alpha1:
     - name: Release Readiness
@@ -49,7 +59,7 @@ jobs:
           jira-token: ${{ secrets.JIRA_TOKEN }}
           project-key: UDEMO
           issue-type: Task
-          issue-fields: 'summary: "Release bcbs-az-claims-api "'
+          issue-fields: 'summary: "Release ${{ inputs.app-name }} v${{ inputs.sem-ver }}"'
         uses: https://github.com/cloudbees-days/jira-create-issue
         id: create-issue
       - name: Publish evidence
@@ -61,6 +71,7 @@ jobs:
             | Field | Value |
             |-------|-------|
             | Issue | ${{ steps.create-issue.outputs.issue-key }} |
+            | Summary | Release ${{ inputs.app-name }} v${{ inputs.sem-ver }} |
             | Type | Release Task |
             | Project | UDEMO — BCBS AZ Claims Platform |
             | Priority | High |
@@ -68,7 +79,7 @@ jobs:
             | Sprint | Sprint 47 |
             | URL | ${{ steps.create-issue.outputs.issue-url }} |
 
-            **Release scope:** bcbs-az-claims-api run #${{ cloudbees.run_number }}
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}` | **Run:** #${{ cloudbees.run_number }}
             **Components:** 1 service, 1 container image
             **Target environments:** DEV → QA → PROD
           format: MARKDOWN
@@ -98,6 +109,8 @@ jobs:
         with:
           content: |-
             ## 🔍 Quality Gate — ✅ PASSED
+
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
 
             ### 🛡️ SonarQube SAST
             | Metric | Value | Threshold | Status |
@@ -133,7 +146,7 @@ jobs:
     timeout-minutes: 1440
     delegates: cloudbees-io/manual-approval/custom-job.yml@v1
     with:
-      instructions: Review quality gate results and approve to proceed to DEV deployment.
+      instructions: "Review quality gate for ${{ inputs.app-name }} v${{ inputs.sem-ver }} and approve to proceed to DEV deployment."
       disallowLaunchByUser: false
       notifyAllEligibleUsers: false
       approvers: 3ad0577a-e80d-11ea-a794-42010a83ae1a
@@ -145,7 +158,7 @@ jobs:
         kind: test
         uses: docker://alpine:3.20
         run: |
-          echo "=== BCBS AZ DEV Smoke Tests ==="
+          echo "=== ${{ inputs.app-name }} v${{ inputs.sem-ver }} — DEV Smoke Tests ==="
           echo "Health Check         /api/v1/health            200  12ms  PASS"
           echo "Authentication       /api/v1/auth/token        200  89ms  PASS"
           echo "Claims Submission    /api/v1/claims            201 134ms  PASS"
@@ -160,6 +173,7 @@ jobs:
           content: |-
             ## 🧪 DEV Smoke Tests — ✅ PASSED
 
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
             **Environment:** `bcbs-az-dev` | **Duration:** 47s | **Run:** #${{ cloudbees.run_number }}
 
             | Test | Endpoint | Method | HTTP | Latency | Result |
@@ -187,7 +201,7 @@ jobs:
         run: |
           PASS_RATE=98
           echo "${PASS_RATE}" >> $CLOUDBEES_OUTPUTS/pass-rate
-          echo "=== BCBS AZ QA Regression Suite ==="
+          echo "=== ${{ inputs.app-name }} v${{ inputs.sem-ver }} — QA Regression Suite ==="
           echo "Claims Processing     38/38  PASS  (100%)"
           echo "Member Eligibility    27/27  PASS  (100%)"
           echo "Provider Directory    21/22  FAIL  (95.5%) - 1 flaky timeout"
@@ -201,6 +215,7 @@ jobs:
           content: |-
             ## 🧪 QA Regression Suite — ✅ PASSED
 
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
             **Environment:** `bcbs-az-qa` | **Duration:** 8m 42s | **Run:** #${{ cloudbees.run_number }}
 
             ### Results by Module
@@ -243,6 +258,7 @@ jobs:
           content: |-
             ## ✅ QA Exit Criteria — ALL MET
 
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
             **Pass rate:** ${{ needs.run-tests-qa.outputs.pass-rate }}% (required ≥ 95%) ✅
 
             | Criterion | Requirement | Actual | Status |
@@ -263,7 +279,7 @@ jobs:
     timeout-minutes: 1440
     delegates: cloudbees-io/manual-approval/custom-job.yml@v1
     with:
-      instructions: QA exit criteria passed. Approve to create ServiceNow CR and proceed to PROD.
+      instructions: "QA exit criteria passed for ${{ inputs.app-name }} v${{ inputs.sem-ver }}. Approve to create ServiceNow CR and proceed to PROD."
       disallowLaunchByUser: false
   create-snow-cr:
     needs: release-manager-approval
@@ -289,6 +305,8 @@ jobs:
             | Field | Value |
             |-------|-------|
             | CR Number | ${{ steps.create-cr.outputs.cr-number }} |
+            | Application | ${{ inputs.app-name }} |
+            | Version | v${{ inputs.sem-ver }} |
             | Type | Standard Change |
             | Category | Software Deployment |
             | Risk Level | 🟢 Low |
@@ -301,7 +319,7 @@ jobs:
             | Testing Evidence | QA regression 98.4% pass rate — attached |
             | CAB Approval | ✅ Auto-Approved (Standard Change Template) |
 
-            **Change description:** Deploy bcbs-az-claims-api run #${{ cloudbees.run_number }} to PROD.
+            **Change description:** Deploy `${{ inputs.app-name }} v${{ inputs.sem-ver }}` (run #${{ cloudbees.run_number }}) to PROD.
             Rolling Kubernetes update — zero downtime expected.
           format: MARKDOWN
   run-smoke-tests:
@@ -312,7 +330,7 @@ jobs:
         kind: test
         uses: docker://alpine:3.20
         run: |
-          echo "=== BCBS AZ PROD Smoke Tests ==="
+          echo "=== ${{ inputs.app-name }} v${{ inputs.sem-ver }} — PROD Smoke Tests ==="
           echo "Health Check         /api/v1/health           200   9ms  PASS"
           echo "Authentication       /api/v1/auth/token       200  71ms  PASS"
           echo "Claims Submit        /api/v1/claims           201 118ms  PASS"
@@ -326,6 +344,7 @@ jobs:
           content: |-
             ## 🚀 PROD Smoke Tests — ✅ PASSED
 
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
             **Environment:** `bcbs-az-prod` | **Duration:** 1m 12s | **Run:** #${{ cloudbees.run_number }}
 
             | Test | Endpoint | HTTP | Latency | Result |
@@ -366,6 +385,8 @@ jobs:
             | Field | Value |
             |-------|-------|
             | CR Number | ${{ needs.create-snow-cr.outputs.cr-number }} |
+            | Application | ${{ inputs.app-name }} |
+            | Version | v${{ inputs.sem-ver }} |
             | Closure Code | Successful |
             | Closed By | Release Engineering Automation |
             | Downtime | 0 minutes |
@@ -384,12 +405,21 @@ jobs:
         uses: cloudbees-io/publish-evidence-item@v1
         with:
           content: |-
-            # 🎉 Release Complete — BCBS AZ Claims API
+            # 🎉 Release Complete — ${{ inputs.app-name }} v${{ inputs.sem-ver }}
 
-            **Release:** Run #${{ cloudbees.run_number }} | **Status:** ✅ SUCCESS
+            **Run:** #${{ cloudbees.run_number }} | **Status:** ✅ SUCCESS
+
+            ## Release Identity
+            | Field | Value |
+            |-------|-------|
+            | Application | ${{ inputs.app-name }} |
+            | Version | v${{ inputs.sem-ver }} |
+            | Run | #${{ cloudbees.run_number }} |
+            | Jira Issue | ${{ needs.create-jira-issue.outputs.issue-key }} |
+            | ServiceNow CR | ${{ needs.create-snow-cr.outputs.cr-number }} |
+            | Image | index.docker.io/cloudbeesdemo/hackers-organized |
 
             ## Pipeline Summary
-
             | Stage | Job | Result | Details |
             |-------|-----|--------|---------|
             | 🔖 Release Readiness | Jira Issue | ✅ | ${{ needs.create-jira-issue.outputs.issue-key }} |
@@ -414,14 +444,6 @@ jobs:
             | QA Pass Rate | 98.4% |
             | PROD P99 Latency | 118ms |
             | Deployment Downtime | 0 minutes |
-
-            ## Artifact
-            | Field | Value |
-            |-------|-------|
-            | Component | bcbs-az-claims-api |
-            | Image | index.docker.io/cloudbeesdemo/hackers-organized |
-            | Jira Ticket | ${{ needs.create-jira-issue.outputs.issue-key }} |
-            | ServiceNow CR | ${{ needs.create-snow-cr.outputs.cr-number }} |
           format: MARKDOWN
   deploy-to-dev:
     needs: approval
