@@ -54,8 +54,7 @@ jobs:
           issue-type: Task
           issue-fields: >
             summary: "Release bcbs-az-claims-api #${{ cloudbees.run_number }}"
-            description: |
-              Standard release deployment initiated via CloudBees Unify.
+            description: "Standard release deployment initiated via CloudBees Unify. Run ${{ cloudbees.run_number }}"
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
         with:
