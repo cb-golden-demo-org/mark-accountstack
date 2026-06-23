@@ -12,11 +12,11 @@ on:
         required: true
 jobs:
   bcbs-az-claims-api:
-    if: ${{ fromJSON(inputs.manifest)['hackers-organized-oct']['build-and-test'].deploy }}
+    if: ${{ fromJSON(inputs.manifest)['bcbs-az-claims-api']['index.docker.io/cloudbeesdemo/hackers-organized'].deploy }}
     uses: cb-golden-demo-org/hackers-organized-oct/.cloudbees/workflows/deploy.yaml
     with:
-      artifact-url: ${{ fromJSON(inputs.manifest)['hackers-organized-oct']['build-and-test'].url }}
-      artifact-id: ${{ fromJSON(inputs.manifest)['hackers-organized-oct']['build-and-test'].id }}
+      artifact-url: ${{ fromJSON(inputs.manifest)['bcbs-az-claims-api']['index.docker.io/cloudbeesdemo/hackers-organized'].url }}
+      artifact-id: ${{ fromJSON(inputs.manifest)['bcbs-az-claims-api']['index.docker.io/cloudbeesdemo/hackers-organized'].id }}
       environment: ${{ inputs.environment }}
     secrets: inherit
     vars: inherit
