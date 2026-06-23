@@ -38,14 +38,13 @@ metadata:
     - name: Pre-Impl
       jobs:
         - release-manager-approval
-        - create-snow-cr
+        - servicenow-cr
     - name: PROD
       jobs:
         - deploy-to-Prod
         - run-smoke-tests
     - name: Post-Impl
       jobs:
-        - close-snow-cr
         - publish-release-summary
 jobs:
   create-jira-issue:
@@ -279,49 +278,17 @@ jobs:
     timeout-minutes: 1440
     delegates: cloudbees-io/manual-approval/custom-job.yml@v1
     with:
-      instructions: "QA exit criteria passed for ${{ inputs.app-name }} v${{ inputs.sem-ver }}. Approve to create ServiceNow CR and proceed to PROD."
+      instructions: "QA exit criteria passed for ${{ inputs.app-name }} v${{ inputs.sem-ver }}. Approve to open ServiceNow CR and proceed to PROD."
       disallowLaunchByUser: false
-  create-snow-cr:
+  servicenow-cr:
     needs: release-manager-approval
-    outputs:
-      cr-number: ${{ steps.create-cr.outputs.cr-number }}
-      cr-sys-id: ${{ steps.create-cr.outputs.cr-sys-id }}
-    steps:
-      - name: Create ServiceNow Change Request
-        id: create-cr
-        uses: docker://alpine:3.20
-        run: |
-          CR_NUMBER="CHG-BCBS-${{ cloudbees.run_number }}"
-          CR_SYS_ID="sys-id-${{ cloudbees.run_number }}"
-          echo "$CR_NUMBER" >> $CLOUDBEES_OUTPUTS/cr-number
-          echo "$CR_SYS_ID" >> $CLOUDBEES_OUTPUTS/cr-sys-id
-          echo "Created CR: $CR_NUMBER"
-      - name: Publish evidence
-        uses: cloudbees-io/publish-evidence-item@v1
-        with:
-          content: |-
-            ## 🎫 ServiceNow Change Request — SUBMITTED
-
-            | Field | Value |
-            |-------|-------|
-            | CR Number | ${{ steps.create-cr.outputs.cr-number }} |
-            | Application | ${{ inputs.app-name }} |
-            | Version | v${{ inputs.sem-ver }} |
-            | Type | Standard Change |
-            | Category | Software Deployment |
-            | Risk Level | 🟢 Low |
-            | Impact | 🟢 Low |
-            | Priority | Moderate |
-            | State | ✅ Approved |
-            | Assignment Group | BCBS AZ Release Engineering |
-            | Implementation Window | Next 4-hour maintenance window |
-            | Backout Plan | Helm rollback to previous image tag (< 5 min) |
-            | Testing Evidence | QA regression 98.4% pass rate — attached |
-            | CAB Approval | ✅ Auto-Approved (Standard Change Template) |
-
-            **Change description:** Deploy `${{ inputs.app-name }} v${{ inputs.sem-ver }}` (run #${{ cloudbees.run_number }}) to PROD.
-            Rolling Kubernetes update — zero downtime expected.
-          format: MARKDOWN
+    uses: ./.cloudbees/workflows/sn-approval.yaml
+    with:
+      app-name: ${{ inputs.app-name }}
+      sem-ver: ${{ inputs.sem-ver }}
+      run-number: ${{ cloudbees.run_number }}
+    secrets: inherit
+    vars: inherit
   run-smoke-tests:
     needs: deploy-to-Prod
     environment: bcbs-az-prod
@@ -367,39 +334,10 @@ jobs:
             | Memory Usage | 412 MB / 1 GB | ✅ Normal |
             | CPU Usage | 8% | ✅ Normal |
           format: MARKDOWN
-  close-snow-cr:
-    needs:
-      - create-snow-cr
-      - run-smoke-tests
-    steps:
-      - name: Close ServiceNow CR
-        uses: docker://alpine:3.20
-        run: |
-          echo "Closing CR ${{ needs.create-snow-cr.outputs.cr-number }} as successful"
-      - name: Publish evidence
-        uses: cloudbees-io/publish-evidence-item@v1
-        with:
-          content: |-
-            ## ✅ ServiceNow CR Closed — SUCCESSFUL
-
-            | Field | Value |
-            |-------|-------|
-            | CR Number | ${{ needs.create-snow-cr.outputs.cr-number }} |
-            | Application | ${{ inputs.app-name }} |
-            | Version | v${{ inputs.sem-ver }} |
-            | Closure Code | Successful |
-            | Closed By | Release Engineering Automation |
-            | Downtime | 0 minutes |
-            | Rollback Required | No |
-            | Post-Impl Issues | None |
-
-            All post-implementation smoke tests passed. CR closed as successful with zero incidents.
-          format: MARKDOWN
   publish-release-summary:
     needs:
-      - close-snow-cr
+      - run-smoke-tests
       - create-jira-issue
-      - create-snow-cr
     steps:
       - name: Release summary
         uses: cloudbees-io/publish-evidence-item@v1
@@ -416,7 +354,6 @@ jobs:
             | Version | v${{ inputs.sem-ver }} |
             | Run | #${{ cloudbees.run_number }} |
             | Jira Issue | ${{ needs.create-jira-issue.outputs.issue-key }} |
-            | ServiceNow CR | ${{ needs.create-snow-cr.outputs.cr-number }} |
             | Image | index.docker.io/cloudbeesdemo/hackers-organized |
 
             ## Pipeline Summary
@@ -431,10 +368,9 @@ jobs:
             | 🧪 QA | Regression Suite | ✅ | 122/124 (98.4%) |
             | 🧪 QA | Exit Criteria | ✅ | All 7 criteria met |
             | 📋 Pre-Impl | Release Manager Approval | ✅ | Approved |
-            | 📋 Pre-Impl | ServiceNow CR | ✅ | ${{ needs.create-snow-cr.outputs.cr-number }} |
+            | 📋 Pre-Impl | ServiceNow CR | ✅ | Created → Assessed → Authorized → Closed |
             | 🚀 PROD | Deploy | ✅ | bcbs-az-prod — zero downtime |
             | 🚀 PROD | Smoke Tests | ✅ | 6/6 passed, avg 67ms |
-            | 📦 Post-Impl | CR Closed | ✅ | Closed Successful |
 
             ## Quality Metrics
             | Metric | Value |
@@ -460,7 +396,7 @@ jobs:
       environment: bcbs-az-qa
     secrets: inherit
   deploy-to-Prod:
-    needs: create-snow-cr
+    needs: servicenow-cr
     uses: ./.cloudbees/workflows/deploy.yaml
     with:
       manifest: ${{ inputs.manifest }}
