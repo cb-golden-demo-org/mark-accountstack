@@ -7,9 +7,8 @@ on:
       manifest:
         type: string
         required: true
-        description: >
-          System-generated manifest parameter required for application releases.
-          See https://docs.cloudbees.com/docs/cloudbees-platform/latest/applications/releases#manifest
+        description: |
+          System-generated manifest parameter required for application releases. See https://docs.cloudbees.com/docs/cloudbees-platform/latest/applications/releases#manifest
 metadata:
   stages/v1alpha1:
     - name: Release Readiness
@@ -44,17 +43,15 @@ jobs:
       issue-key: ${{ steps.create-issue.outputs.issue-key }}
       issue-url: ${{ steps.create-issue.outputs.issue-url }}
     steps:
-      - uses: https://github.com/cloudbees-days/jira-create-issue
-        id: create-issue
-        with:
+      - with:
           jira-url: ${{ secrets.JIRA_URL }}
           jira-username: ${{ secrets.JIRA_USERNAME }}
           jira-token: ${{ secrets.JIRA_TOKEN }}
           project-key: UDEMO
           issue-type: Task
-          issue-fields: >
-            summary: "Release bcbs-az-claims-api #${{ cloudbees.run_number }}"
-            description: "Standard release deployment initiated via CloudBees Unify. Run ${{ cloudbees.run_number }}"
+          issue-fields: 'summary: "Release bcbs-az-claims-api "'
+        uses: https://github.com/cloudbees-days/jira-create-issue
+        id: create-issue
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
         with:
@@ -63,7 +60,6 @@ jobs:
             **Issue:** ${{ steps.create-issue.outputs.issue-key }}
             **URL:** ${{ steps.create-issue.outputs.issue-url }}
           format: MARKDOWN
-
   quality-gate:
     needs: create-jira-issue
     steps:
@@ -96,15 +92,15 @@ jobs:
             | Snyk SCA | Passed |
             | Jira Issue | ${{ needs.create-jira-issue.outputs.issue-key }} |
           format: MARKDOWN
-
   approval:
     needs: quality-gate
     timeout-minutes: 1440
     delegates: cloudbees-io/manual-approval/custom-job.yml@v1
     with:
-      instructions: "Review quality gate results and approve to proceed to DEV deployment."
+      instructions: Review quality gate results and approve to proceed to DEV deployment.
       disallowLaunchByUser: false
-
+      notifyAllEligibleUsers: false
+      approvers: 3ad0577a-e80d-11ea-a794-42010a83ae1a
   deploy-to-dev:
     needs: approval
     steps:
@@ -126,9 +122,10 @@ jobs:
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
         with:
-          content: "## DEV Deployment Complete\nEnvironment: `bcbs-az-dev`"
+          content: |-
+            ## DEV Deployment Complete
+            Environment: `bcbs-az-dev`
           format: MARKDOWN
-
   run-tests-dev:
     needs: deploy-to-dev
     environment: bcbs-az-dev
@@ -145,7 +142,6 @@ jobs:
         with:
           content: "## DEV Smoke Tests: Passed"
           format: MARKDOWN
-
   deploy-to-qa:
     needs: run-tests-dev
     steps:
@@ -166,9 +162,10 @@ jobs:
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
         with:
-          content: "## QA Deployment Complete\nEnvironment: `bcbs-az-qa`"
+          content: |-
+            ## QA Deployment Complete
+            Environment: `bcbs-az-qa`
           format: MARKDOWN
-
   run-tests-qa:
     needs: deploy-to-qa
     environment: bcbs-az-qa
@@ -192,7 +189,6 @@ jobs:
             |-------|--------|--------|-----------|
             | 124 | 122 | 2 | ${{ steps.run-tests.outputs.pass-rate }}% |
           format: MARKDOWN
-
   exit-criteria-qa:
     needs: run-tests-qa
     environment: bcbs-az-qa
@@ -216,15 +212,13 @@ jobs:
             - P1 Blockers: 0
             - Ready for Pre-Impl
           format: MARKDOWN
-
   release-manager-approval:
     needs: exit-criteria-qa
     timeout-minutes: 1440
     delegates: cloudbees-io/manual-approval/custom-job.yml@v1
     with:
-      instructions: "QA exit criteria passed. Approve to create ServiceNow CR and proceed to PROD."
+      instructions: QA exit criteria passed. Approve to create ServiceNow CR and proceed to PROD.
       disallowLaunchByUser: false
-
   create-snow-cr:
     needs: release-manager-approval
     outputs:
@@ -252,7 +246,6 @@ jobs:
             | Risk | Low |
             | Status | Approved |
           format: MARKDOWN
-
   deploy-to-prod:
     needs: create-snow-cr
     steps:
@@ -274,9 +267,10 @@ jobs:
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
         with:
-          content: "## PROD Deployment Complete\nCR: ${{ needs.create-snow-cr.outputs.cr-number }}"
+          content: |-
+            ## PROD Deployment Complete
+            CR: ${{ needs.create-snow-cr.outputs.cr-number }}
           format: MARKDOWN
-
   run-smoke-tests:
     needs: deploy-to-prod
     environment: bcbs-az-prod
@@ -291,7 +285,6 @@ jobs:
         with:
           content: "## PROD Smoke Tests: All Passed"
           format: MARKDOWN
-
   close-snow-cr:
     needs:
       - run-smoke-tests
@@ -309,7 +302,6 @@ jobs:
             **CR:** ${{ needs.create-snow-cr.outputs.cr-number }}
             **Status:** Closed Successful
           format: MARKDOWN
-
   publish-release-summary:
     needs:
       - close-snow-cr
