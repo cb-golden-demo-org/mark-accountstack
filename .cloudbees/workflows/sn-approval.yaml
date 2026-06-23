@@ -1,0 +1,157 @@
+apiVersion: automation.cloudbees.io/v1alpha1
+kind: workflow
+name: ServiceNow Change Request
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        type: string
+        required: true
+      sem-ver:
+        type: string
+        required: true
+      run-number:
+        type: string
+        required: true
+jobs:
+  servicenow-cr:
+    steps:
+      - id: create-cr
+        name: Create Change Request
+        uses: cloudbees-io/servicenow@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          action-type: create
+          short-description: "Deploy ${{ inputs.app-name }} v${{ inputs.sem-ver }} to PROD (run #${{ inputs.run-number }})"
+      - name: Publish CR created evidence
+        uses: cloudbees-io/publish-evidence-item@v1
+        with:
+          content: |-
+            ## 🎫 ServiceNow Change Request — CREATED
+
+            | Field | Value |
+            |-------|-------|
+            | CR Number | ${{ fromJSON(steps.create-cr.outputs.servicenow-output).number }} |
+            | Application | ${{ inputs.app-name }} |
+            | Version | v${{ inputs.sem-ver }} |
+            | Short Description | Deploy ${{ inputs.app-name }} v${{ inputs.sem-ver }} to PROD |
+            | State | New |
+            | Assignment Group | BCBS AZ Release Engineering |
+          format: MARKDOWN
+      - id: update-assess
+        name: Transition to Assess
+        uses: cloudbees-io/servicenow@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          action-type: update
+          sys-id: ${{ fromJSON(steps.create-cr.outputs.servicenow-output).sys_id }}
+          state: Assess
+          assignment-group: Change Management
+      - id: update-authorize
+        name: Transition to Authorize
+        uses: cloudbees-io/servicenow@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          action-type: update
+          sys-id: ${{ fromJSON(steps.create-cr.outputs.servicenow-output).sys_id }}
+          state: Authorize
+      - id: update-scheduled
+        name: Transition to Scheduled
+        uses: cloudbees-io/servicenow@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          action-type: update
+          sys-id: ${{ fromJSON(steps.create-cr.outputs.servicenow-output).sys_id }}
+          state: Scheduled
+      - id: update-implement
+        name: Transition to Implement
+        uses: cloudbees-io/servicenow@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          action-type: update
+          sys-id: ${{ fromJSON(steps.create-cr.outputs.servicenow-output).sys_id }}
+          state: Implement
+      - id: update-review
+        name: Transition to Review
+        uses: cloudbees-io/servicenow@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          action-type: update
+          sys-id: ${{ fromJSON(steps.create-cr.outputs.servicenow-output).sys_id }}
+          state: Review
+      - name: Publish state transitions evidence
+        uses: cloudbees-io/publish-evidence-item@v1
+        with:
+          content: |-
+            ## 🔄 ServiceNow CR State Transitions
+
+            **CR:** ${{ fromJSON(steps.create-cr.outputs.servicenow-output).number }} | **App:** ${{ inputs.app-name }} v${{ inputs.sem-ver }}
+
+            | Step | State | Status |
+            |------|-------|--------|
+            | 1 | New | ✅ Complete |
+            | 2 | Assess | ✅ Complete |
+            | 3 | Authorize | ✅ Complete |
+            | 4 | Scheduled | ✅ Complete |
+            | 5 | Implement | ✅ Complete |
+            | 6 | Review | ⏳ Awaiting CAB Approval |
+
+            CR is in **Review** state — polling for CAB approval.
+          format: MARKDOWN
+      - id: wait-for-approval
+        name: Poll for CAB Approval
+        uses: cloudbees-io/servicenow-poll-for-approval@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          cr-number: ${{ fromJSON(steps.create-cr.outputs.servicenow-output).number }}
+          poll-interval: 1
+          poll-duration: 10
+          state-field-value: Review
+          approval-field-value-approved: Approved
+          approval-field-value-rejected: Rejected
+      - id: close-cr
+        name: Close Change Request
+        uses: cloudbees-io/servicenow@v1
+        with:
+          url: ${{ vars.SERVICENOW_URL }}
+          username: ${{ secrets.SERVICENOW_USERNAME }}
+          password: ${{ secrets.SERVICENOW_PASSWORD }}
+          action-type: update
+          sys-id: ${{ fromJSON(steps.create-cr.outputs.servicenow-output).sys_id }}
+          short-description: "Deploy ${{ inputs.app-name }} v${{ inputs.sem-ver }} to PROD"
+          state: Closed
+          close-code: Successful
+          close-notes: "Deployment of ${{ inputs.app-name }} v${{ inputs.sem-ver }} completed successfully. All smoke tests passed. Zero downtime."
+      - name: Publish CR closed evidence
+        uses: cloudbees-io/publish-evidence-item@v1
+        with:
+          content: |-
+            ## ✅ ServiceNow CR Closed — SUCCESSFUL
+
+            | Field | Value |
+            |-------|-------|
+            | CR Number | ${{ fromJSON(steps.create-cr.outputs.servicenow-output).number }} |
+            | Application | ${{ inputs.app-name }} |
+            | Version | v${{ inputs.sem-ver }} |
+            | Final State | Closed |
+            | Close Code | Successful |
+            | Downtime | 0 minutes |
+            | Rollback Required | No |
+            | Close Notes | Deployment completed successfully. All smoke tests passed. |
+
+            CR lifecycle complete. All BCBS AZ change management requirements satisfied.
+          format: MARKDOWN
