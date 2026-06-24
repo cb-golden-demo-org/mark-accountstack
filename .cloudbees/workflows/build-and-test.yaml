@@ -29,10 +29,12 @@ metadata:
     - name: DEV
       jobs:
         - deploy-to-dev
+        - configure-flags-dev
         - run-tests-dev
     - name: QA
       jobs:
         - deploy-to-QA
+        - configure-flags-qa
         - run-tests-qa
         - exit-criteria-qa
     - name: Pre-Impl
@@ -42,6 +44,7 @@ metadata:
     - name: PROD
       jobs:
         - deploy-to-Prod
+        - configure-flags-prod
         - run-smoke-tests
     - name: Post-Impl
       jobs:
@@ -156,8 +159,58 @@ jobs:
       disallowLaunchByUser: false
       notifyAllEligibleUsers: false
       approvers: 3ad0577a-e80d-11ea-a794-42010a83ae1a
-  run-tests-dev:
+  deploy-to-dev:
+    needs: approval
+    uses: ./.cloudbees/workflows/deploy.yaml
+    with:
+      manifest: ${{ inputs.manifest }}
+      environment: bcbs-az-dev
+    secrets: inherit
+  configure-flags-dev:
     needs: deploy-to-dev
+    environment: bcbs-az-dev
+    steps:
+      - name: Configure feature flags for DEV
+        uses: docker://alpine:3.20
+        run: |
+          echo "============================================="
+          echo "  Feature Flag Configuration — DEV"
+          echo "  App: BCBS AZ Member Portal"
+          echo "  Strategy: Full enablement (100% traffic)"
+          echo "============================================="
+          echo "[FLAGS] new-claims-submission-ui   → ENABLED  (100%)"
+          echo "[FLAGS] member-portal-api-version  → v2       (100%)"
+          echo "[FLAGS] real-time-eligibility-check → ENABLED (100%)"
+          echo "[FLAGS] All 3 flags configured for DEV environment"
+          echo "[FLAGS] A/B baseline established — full v2 exposure in DEV"
+      - name: Publish flag configuration evidence
+        uses: cloudbees-io/publish-evidence-item@v1
+        with:
+          content: |-
+            ## 🚩 Feature Flag Configuration — DEV
+
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
+            **Environment:** `bcbs-az-dev` | **Strategy:** Full enablement — validate all new features
+
+            ### Flag States After Deployment
+            | Flag | Type | DEV Value | Rollout | Purpose |
+            |------|------|-----------|---------|---------|
+            | `new-claims-submission-ui` | Boolean | ✅ **ENABLED** | 100% | New React claims form with auto-fill |
+            | `member-portal-api-version` | String | `v2` | 100% | REST API v2 with real-time eligibility |
+            | `real-time-eligibility-check` | Boolean | ✅ **ENABLED** | 100% | Live 270/271 EDI eligibility lookups |
+
+            ### A/B Test Design
+            | Group | Traffic Split | Experience |
+            |-------|--------------|------------|
+            | Group A (Control) | 0% in DEV | Legacy UI + API v1 |
+            | Group B (Variant) | **100% in DEV** | New claims UI + API v2 + real-time eligibility |
+
+            > 💡 DEV runs 100% variant to maximize coverage of new code paths before QA regression.
+
+            **All flags configured via CloudBees Unify Feature Management** ✅
+          format: MARKDOWN
+  run-tests-dev:
+    needs: configure-flags-dev
     environment: bcbs-az-dev
     steps:
       - name: DEV smoke tests
@@ -165,14 +218,14 @@ jobs:
         uses: docker://alpine:3.20
         run: |
           echo "=== ${{ inputs.app-name }} v${{ inputs.sem-ver }} — DEV Smoke Tests ==="
-          echo "Health Check         /api/v1/health            200  12ms  PASS"
-          echo "Authentication       /api/v1/auth/token        200  89ms  PASS"
-          echo "Claims Submission    /api/v1/claims            201 134ms  PASS"
-          echo "Claims Lookup        /api/v1/claims/{id}       200  67ms  PASS"
-          echo "Member Eligibility   /api/v1/eligibility       200 112ms  PASS"
-          echo "Provider Search      /api/v1/providers         200  55ms  PASS"
-          echo "Benefit Summary      /api/v1/benefits/{id}     200  98ms  PASS"
-          echo "=== 7/7 PASSED | Avg: 81ms | P99: 134ms ==="
+          echo "Health Check              /api/v2/health            200  12ms  PASS"
+          echo "Authentication            /api/v2/auth/token        200  89ms  PASS"
+          echo "Claims Submission (new)   /api/v2/claims            201 134ms  PASS  [new-claims-submission-ui=ON]"
+          echo "Claims Lookup             /api/v2/claims/{id}       200  67ms  PASS"
+          echo "Member Eligibility (RT)   /api/v2/eligibility       200  48ms  PASS  [real-time-eligibility-check=ON]"
+          echo "Provider Search           /api/v2/providers         200  55ms  PASS"
+          echo "Benefit Summary           /api/v2/benefits/{id}     200  98ms  PASS"
+          echo "=== 7/7 PASSED | Avg: 72ms | P99: 134ms ==="
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
         with:
@@ -182,17 +235,24 @@ jobs:
             **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
             **Environment:** `bcbs-az-dev` | **Duration:** 47s | **Run:** #${{ cloudbees.run_number }}
 
-            | Test | Endpoint | Method | HTTP | Latency | Result |
-            |------|---------|--------|------|---------|--------|
-            | Health Check | /api/v1/health | GET | 200 | 12ms | ✅ Pass |
-            | Authentication | /api/v1/auth/token | POST | 200 | 89ms | ✅ Pass |
-            | Claims Submission | /api/v1/claims | POST | 201 | 134ms | ✅ Pass |
-            | Claims Lookup | /api/v1/claims/{id} | GET | 200 | 67ms | ✅ Pass |
-            | Member Eligibility | /api/v1/eligibility | POST | 200 | 112ms | ✅ Pass |
-            | Provider Search | /api/v1/providers | GET | 200 | 55ms | ✅ Pass |
-            | Benefit Summary | /api/v1/benefits/{memberId} | GET | 200 | 98ms | ✅ Pass |
+            | Test | Endpoint | HTTP | Latency | Flag Context | Result |
+            |------|---------|------|---------|-------------|--------|
+            | Health Check | /api/v2/health | 200 | 12ms | — | ✅ Pass |
+            | Authentication | /api/v2/auth/token | 200 | 89ms | — | ✅ Pass |
+            | Claims Submission | /api/v2/claims | 201 | 134ms | `new-claims-submission-ui=ON` | ✅ Pass |
+            | Claims Lookup | /api/v2/claims/{id} | 200 | 67ms | `api-version=v2` | ✅ Pass |
+            | Member Eligibility | /api/v2/eligibility | 200 | 48ms | `real-time-eligibility=ON` | ✅ Pass |
+            | Provider Search | /api/v2/providers | 200 | 55ms | `api-version=v2` | ✅ Pass |
+            | Benefit Summary | /api/v2/benefits/{memberId} | 200 | 98ms | — | ✅ Pass |
 
-            **7/7 tests passed** | Avg latency: 81ms | P99: 134ms
+            **7/7 tests passed** | Avg latency: 72ms | P99: 134ms
+
+            ### 🚩 Active Feature Flags in DEV
+            | Flag | State | Coverage |
+            |------|-------|---------|
+            | `new-claims-submission-ui` | ✅ Enabled | 100% |
+            | `member-portal-api-version` | `v2` | 100% |
+            | `real-time-eligibility-check` | ✅ Enabled | 100% |
 
             ### 🏗️ Components Deployed to DEV
             | Component | Image Tag | Status |
@@ -201,8 +261,59 @@ jobs:
             | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | ✅ Running |
             | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | ✅ Running |
           format: MARKDOWN
-  run-tests-qa:
+  deploy-to-QA:
+    needs: run-tests-dev
+    uses: ./.cloudbees/workflows/deploy.yaml
+    with:
+      manifest: ${{ inputs.manifest }}
+      environment: bcbs-az-qa
+    secrets: inherit
+  configure-flags-qa:
     needs: deploy-to-QA
+    environment: bcbs-az-qa
+    steps:
+      - name: Configure feature flags for QA
+        uses: docker://alpine:3.20
+        run: |
+          echo "============================================="
+          echo "  Feature Flag Configuration — QA"
+          echo "  App: BCBS AZ Member Portal"
+          echo "  Strategy: Full enablement — regression validation"
+          echo "============================================="
+          echo "[FLAGS] new-claims-submission-ui    → ENABLED  (100%)"
+          echo "[FLAGS] member-portal-api-version   → v2       (100%)"
+          echo "[FLAGS] real-time-eligibility-check → ENABLED  (100%)"
+          echo "[FLAGS] DEV flags promoted to QA — identical configuration"
+          echo "[FLAGS] Ready for full regression suite against v2 API"
+      - name: Publish flag configuration evidence
+        uses: cloudbees-io/publish-evidence-item@v1
+        with:
+          content: |-
+            ## 🚩 Feature Flag Configuration — QA
+
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
+            **Environment:** `bcbs-az-qa` | **Strategy:** Full enablement — validate at scale before PROD
+
+            ### Flag States After Deployment
+            | Flag | Type | QA Value | Rollout | Validated in DEV |
+            |------|------|----------|---------|-----------------|
+            | `new-claims-submission-ui` | Boolean | ✅ **ENABLED** | 100% | ✅ Yes |
+            | `member-portal-api-version` | String | `v2` | 100% | ✅ Yes |
+            | `real-time-eligibility-check` | Boolean | ✅ **ENABLED** | 100% | ✅ Yes |
+
+            ### Flag Promotion Path
+            | Environment | `new-claims-submission-ui` | `member-portal-api-version` | `real-time-eligibility-check` |
+            |-------------|--------------------------|----------------------------|-------------------------------|
+            | DEV ✅ | Enabled (100%) | v2 | Enabled (100%) |
+            | **QA** ➡️ | **Enabled (100%)** | **v2** | **Enabled (100%)** |
+            | PROD 🔜 | Enabled (10% A/B) | v1 → v2 ramp | Enabled (25% canary) |
+
+            > 💡 QA runs full regression against 100% variant traffic — this validates the new experience before the controlled PROD A/B rollout.
+
+            **Flags promoted from DEV → QA automatically by release pipeline** ✅
+          format: MARKDOWN
+  run-tests-qa:
+    needs: configure-flags-qa
     environment: bcbs-az-qa
     outputs:
       pass-rate: ${{ steps.run-tests.outputs.pass-rate }}
@@ -215,12 +326,12 @@ jobs:
           PASS_RATE=98
           echo "${PASS_RATE}" >> $CLOUDBEES_OUTPUTS/pass-rate
           echo "=== ${{ inputs.app-name }} v${{ inputs.sem-ver }} — QA Regression Suite ==="
-          echo "Claims Processing     38/38  PASS  (100%)"
-          echo "Member Eligibility    27/27  PASS  (100%)"
-          echo "Provider Directory    21/22  FAIL  (95.5%) - 1 flaky timeout"
-          echo "Benefits & Coverage   19/19  PASS  (100%)"
-          echo "Auth & Authorization  14/14  PASS  (100%)"
-          echo "Payments & EOB         3/4   FAIL  (75%)  - PDF size limit"
+          echo "Claims Processing (v2 API)    38/38  PASS  (100%)  [new-claims-submission-ui=ON]"
+          echo "Member Eligibility (RT)       27/27  PASS  (100%)  [real-time-eligibility-check=ON]"
+          echo "Provider Directory            21/22  FAIL  (95.5%) - 1 flaky timeout"
+          echo "Benefits & Coverage (v2)      19/19  PASS  (100%)  [api-version=v2]"
+          echo "Auth & Authorization          14/14  PASS  (100%)"
+          echo "Payments & EOB                 3/4   FAIL  (75%)   - PDF size limit"
           echo "=== 122/124 PASSED (${PASS_RATE}%) ==="
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
@@ -232,15 +343,15 @@ jobs:
             **Environment:** `bcbs-az-qa` | **Duration:** 8m 42s | **Run:** #${{ cloudbees.run_number }}
 
             ### Results by Module
-            | Module | Total | Passed | Failed | Pass Rate |
-            |--------|-------|--------|--------|-----------|
-            | Claims Processing | 38 | 38 | 0 | ✅ 100% |
-            | Member Eligibility | 27 | 27 | 0 | ✅ 100% |
-            | Provider Directory | 22 | 21 | 1 | ⚠️ 95.5% |
-            | Benefits & Coverage | 19 | 19 | 0 | ✅ 100% |
-            | Auth & Authorization | 14 | 14 | 0 | ✅ 100% |
-            | Payments & EOB | 4 | 3 | 1 | ⚠️ 75% |
-            | **Total** | **124** | **122** | **2** | **98.4%** |
+            | Module | Total | Passed | Failed | Pass Rate | Flag Context |
+            |--------|-------|--------|--------|-----------|-------------|
+            | Claims Processing | 38 | 38 | 0 | ✅ 100% | `new-claims-submission-ui=ON` |
+            | Member Eligibility | 27 | 27 | 0 | ✅ 100% | `real-time-eligibility=ON` |
+            | Provider Directory | 22 | 21 | 1 | ⚠️ 95.5% | — |
+            | Benefits & Coverage | 19 | 19 | 0 | ✅ 100% | `api-version=v2` |
+            | Auth & Authorization | 14 | 14 | 0 | ✅ 100% | — |
+            | Payments & EOB | 4 | 3 | 1 | ⚠️ 75% | — |
+            | **Total** | **124** | **122** | **2** | **98.4%** | |
 
             ### Known Failures (Non-Blocking)
             | # | Test | Module | Notes |
@@ -249,7 +360,13 @@ jobs:
             | 2 | test_eob_pdf_generation_large | Payments & EOB | PDF > 10MB limit — backlog item (UDEMO-389) |
 
             **Pass rate: ${{ steps.run-tests.outputs.pass-rate }}%** (threshold: ≥ 95%) ✅
-            Both failures are pre-existing tracked issues — no P1 or P2 blockers.
+
+            ### 🚩 Active Feature Flags in QA
+            | Flag | State | Coverage | A/B Group |
+            |------|-------|---------|-----------|
+            | `new-claims-submission-ui` | ✅ Enabled | 100% | All users — Variant B |
+            | `member-portal-api-version` | `v2` | 100% | All users — Variant B |
+            | `real-time-eligibility-check` | ✅ Enabled | 100% | All users — Variant B |
 
             ### 🏗️ Components Deployed to QA
             | Component | Image Tag | Status |
@@ -290,16 +407,24 @@ jobs:
             | Performance Regression | < 20% | +3.1% | ✅ Met |
             | Rollback Plan Documented | Required | Yes | ✅ Met |
             | Release Notes Approved | Required | Yes | ✅ Met |
+            | Feature Flag Config Validated | Required | Yes | ✅ Met |
+
+            ### 🚩 QA Feature Flag Sign-off
+            | Flag | Validated | Sign-off |
+            |------|-----------|---------|
+            | `new-claims-submission-ui` | 38/38 claims tests passed | ✅ Ready for PROD A/B |
+            | `member-portal-api-version` | v2 API regression clean | ✅ Ready for PROD canary |
+            | `real-time-eligibility-check` | 27/27 eligibility tests passed | ✅ Ready for PROD rollout |
 
             **Decision: ✅ APPROVED FOR PRE-IMPL**
-            All exit criteria satisfied. Release manager approval required to proceed to PROD.
+            All exit criteria satisfied. Flags validated — PROD A/B rollout plan confirmed.
           format: MARKDOWN
   release-manager-approval:
     needs: exit-criteria-qa
     timeout-minutes: 1440
     delegates: cloudbees-io/manual-approval/custom-job.yml@v1
     with:
-      instructions: "QA exit criteria passed for ${{ inputs.app-name }} v${{ inputs.sem-ver }}. Approve to open ServiceNow CR and proceed to PROD."
+      instructions: "QA exit criteria passed for ${{ inputs.app-name }} v${{ inputs.sem-ver }}. Approve to open ServiceNow CR and proceed to PROD A/B deployment."
       disallowLaunchByUser: false
   servicenow-cr:
     needs: release-manager-approval
@@ -310,8 +435,79 @@ jobs:
       run-number: ${{ cloudbees.run_number }}
     secrets: inherit
     vars: inherit
-  run-smoke-tests:
+  deploy-to-Prod:
+    needs: servicenow-cr
+    uses: ./.cloudbees/workflows/deploy.yaml
+    with:
+      manifest: ${{ inputs.manifest }}
+      environment: bcbs-az-prod
+    secrets: inherit
+  configure-flags-prod:
     needs: deploy-to-Prod
+    environment: bcbs-az-prod
+    steps:
+      - name: Configure feature flags for PROD A/B test
+        uses: docker://alpine:3.20
+        run: |
+          echo "============================================="
+          echo "  Feature Flag Configuration — PROD"
+          echo "  App: BCBS AZ Member Portal"
+          echo "  Strategy: Controlled A/B rollout"
+          echo "============================================="
+          echo "[FLAGS] new-claims-submission-ui    → ENABLED   (10% — Group B)"
+          echo "[FLAGS]                               DISABLED   (90% — Group A control)"
+          echo "[FLAGS] member-portal-api-version   → v1        (90% — stable)"
+          echo "[FLAGS]                               v2         (10% — canary)"
+          echo "[FLAGS] real-time-eligibility-check → ENABLED   (25% — canary)"
+          echo ""
+          echo "[A/B] Group A (90%): Legacy UI + API v1 + standard eligibility"
+          echo "[A/B] Group B (10%): New claims UI + API v2 + real-time eligibility"
+          echo ""
+          echo "[FLAGS] PROD A/B test active — monitoring conversion & error rates"
+          echo "[FLAGS] Full ramp target: 50% after 72h if error rate < 0.1%"
+      - name: Publish flag configuration evidence
+        uses: cloudbees-io/publish-evidence-item@v1
+        with:
+          content: |-
+            ## 🚩 Feature Flag Configuration — PROD A/B Test Active
+
+            **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
+            **Environment:** `bcbs-az-prod` | **Strategy:** Controlled A/B rollout — minimize blast radius
+
+            ### 🔬 A/B Test Configuration
+            | Group | Traffic | Users | Experience |
+            |-------|---------|-------|------------|
+            | **A — Control** | 90% | ~450,000 members | Legacy claims UI + API v1 + standard eligibility |
+            | **B — Variant** | 10% | ~50,000 members | New claims UI + API v2 + real-time eligibility |
+
+            ### Flag States in PROD
+            | Flag | Type | Group A (90%) | Group B (10%) | Purpose |
+            |------|------|--------------|--------------|---------|
+            | `new-claims-submission-ui` | Boolean | ❌ Off | ✅ **On** | New React claims form with auto-fill & validation |
+            | `member-portal-api-version` | String | `v1` | `v2` | REST API version serving the portal |
+            | `real-time-eligibility-check` | Boolean | ❌ Off (75%) | ✅ **On** (25%) | Live 270/271 EDI real-time eligibility |
+
+            ### Ramp Schedule
+            | Phase | Traffic (Group B) | Trigger Condition | Target Date |
+            |-------|------------------|-------------------|-------------|
+            | Initial rollout | 10% | Deploy complete | Now |
+            | Phase 2 | 25% | Error rate < 0.1% for 24h | +24h |
+            | Phase 3 | 50% | Error rate < 0.1% for 48h | +72h |
+            | Full rollout | 100% | No P1 issues, conversion uplift > 5% | +7d |
+
+            ### Rollback Plan
+            | Trigger | Action | SLA |
+            |---------|--------|-----|
+            | Error rate > 0.5% | Disable `new-claims-submission-ui` | < 2 min |
+            | P99 latency > 500ms | Revert `member-portal-api-version` to v1 | < 2 min |
+            | P1 incident | Disable all 3 flags → 100% Group A | < 5 min |
+
+            > 🛡️ All flag changes are instant and require no re-deployment. Rollback is a single toggle in CloudBees Unify Feature Management.
+
+            **PROD A/B test initialized** ✅ Monitoring active — Datadog dashboard: `bcbs-az/feature-flags/ab-test-v${{ inputs.sem-ver }}`
+          format: MARKDOWN
+  run-smoke-tests:
+    needs: configure-flags-prod
     environment: bcbs-az-prod
     steps:
       - name: PROD smoke tests
@@ -319,13 +515,17 @@ jobs:
         uses: docker://alpine:3.20
         run: |
           echo "=== ${{ inputs.app-name }} v${{ inputs.sem-ver }} — PROD Smoke Tests ==="
+          echo "--- Group A (Control — 90% traffic) ---"
           echo "Health Check         /api/v1/health           200   9ms  PASS"
           echo "Authentication       /api/v1/auth/token       200  71ms  PASS"
-          echo "Claims Submit        /api/v1/claims           201 118ms  PASS"
+          echo "Claims Submit (v1)   /api/v1/claims           201 118ms  PASS"
           echo "Claims Lookup        /api/v1/claims/{id}      200  54ms  PASS"
           echo "Member Eligibility   /api/v1/eligibility      200 103ms  PASS"
           echo "Provider Search      /api/v1/providers        200  48ms  PASS"
-          echo "=== 6/6 PASSED | Avg: 67ms | P99: 118ms ==="
+          echo "--- Group B (Variant — 10% traffic) ---"
+          echo "Claims Submit (new)  /api/v2/claims           201  97ms  PASS  [new-claims-submission-ui=ON]"
+          echo "Eligibility (RT)     /api/v2/eligibility      200  41ms  PASS  [real-time-eligibility=ON]"
+          echo "=== 8/8 PASSED | Group A avg: 67ms | Group B avg: 69ms ==="
       - name: Publish evidence
         uses: cloudbees-io/publish-evidence-item@v1
         with:
@@ -333,8 +533,9 @@ jobs:
             ## 🚀 PROD Smoke Tests — ✅ PASSED
 
             **Application:** `${{ inputs.app-name }}` | **Version:** `v${{ inputs.sem-ver }}`
-            **Environment:** `bcbs-az-prod` | **Duration:** 1m 12s | **Run:** #${{ cloudbees.run_number }}
+            **Environment:** `bcbs-az-prod` | **Duration:** 1m 31s | **Run:** #${{ cloudbees.run_number }}
 
+            ### Group A — Control (90% of traffic)
             | Test | Endpoint | HTTP | Latency | Result |
             |------|---------|------|---------|--------|
             | Health Check | /api/v1/health | 200 | 9ms | ✅ Pass |
@@ -344,7 +545,13 @@ jobs:
             | Member Eligibility | /api/v1/eligibility | 200 | 103ms | ✅ Pass |
             | Provider Search | /api/v1/providers | 200 | 48ms | ✅ Pass |
 
-            **6/6 critical path tests passed** ✅
+            ### Group B — Variant (10% of traffic, feature flags active)
+            | Test | Endpoint | HTTP | Latency | Flag | Result |
+            |------|---------|------|---------|------|--------|
+            | Claims Submit (new UI) | /api/v2/claims | 201 | 97ms | `new-claims-submission-ui=ON` | ✅ Pass |
+            | Eligibility (real-time) | /api/v2/eligibility | 200 | 41ms | `real-time-eligibility=ON` | ✅ Pass |
+
+            **8/8 tests passed** | Group A avg: 67ms | Group B avg: 69ms (+3% — within tolerance)
 
             ### 🏗️ Components Deployed to PROD
             | Component | Image Tag | Pods | Error Rate | Status |
@@ -353,13 +560,15 @@ jobs:
             | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | 2/2 | 0.00% | ✅ Healthy |
             | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | 2/2 | 0.00% | ✅ Healthy |
 
-            ### Post-Deploy Health
-            | Metric | Value | Status |
-            |--------|-------|--------|
-            | Total Pods Running | 7/7 | ✅ Healthy |
-            | Error Rate (1m) | 0.00% | ✅ Normal |
-            | Avg Response Time | 67ms | ✅ Normal |
-            | Deployment Downtime | 0 min | ✅ Zero downtime |
+            ### A/B Test — Initial Signal (T+0)
+            | Metric | Group A | Group B | Delta |
+            |--------|---------|---------|-------|
+            | Error Rate | 0.00% | 0.00% | — |
+            | Avg Latency | 67ms | 69ms | +3% ✅ |
+            | Claims Submission Time | 118ms | 97ms | -18% 🎉 |
+            | Eligibility Response | 103ms | 41ms | -60% 🎉 |
+
+            > 🟢 A/B test healthy — Group B showing 18% faster claim submission and 60% faster eligibility via real-time EDI.
           format: MARKDOWN
   publish-release-summary:
     needs:
@@ -372,7 +581,7 @@ jobs:
           content: |-
             # 🎉 Release Complete — ${{ inputs.app-name }} v${{ inputs.sem-ver }}
 
-            **Run:** #${{ cloudbees.run_number }} | **Status:** ✅ SUCCESS
+            **Run:** #${{ cloudbees.run_number }} | **Status:** ✅ SUCCESS | **A/B Test:** 🟢 Active
 
             ## Release Identity
             | Field | Value |
@@ -383,11 +592,25 @@ jobs:
             | Jira Issue | ${{ needs.create-jira-issue.outputs.issue-key }} |
 
             ## Components Released
-            | Component | Repository | Image | Deployed To |
-            |-----------|-----------|-------|-------------|
-            | bcbs-az-claims-api | hackers-organized-oct | cloudbeesdemo/hackers-organized | DEV ✅ QA ✅ PROD ✅ |
-            | bcbs-az-member-portal | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | DEV ✅ QA ✅ PROD ✅ |
-            | bcbs-az-eligibility-svc | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | DEV ✅ QA ✅ PROD ✅ |
+            | Component | Repository | Image | DEV | QA | PROD |
+            |-----------|-----------|-------|-----|----|------|
+            | bcbs-az-claims-api | hackers-organized-oct | cloudbeesdemo/hackers-organized | ✅ | ✅ | ✅ |
+            | bcbs-az-member-portal | bcbs-az-member-portal | cloudbeesdemo/bcbs-az-member-portal | ✅ | ✅ | ✅ |
+            | bcbs-az-eligibility-svc | bcbs-az-eligibility-svc | cloudbeesdemo/bcbs-az-eligibility-svc | ✅ | ✅ | ✅ |
+
+            ## 🚩 Feature Flag A/B Test Summary
+            | Flag | DEV | QA | PROD Group A (90%) | PROD Group B (10%) |
+            |------|-----|----|--------------------|---------------------|
+            | `new-claims-submission-ui` | ✅ 100% | ✅ 100% | ❌ Off | ✅ On |
+            | `member-portal-api-version` | `v2` 100% | `v2` 100% | `v1` | `v2` |
+            | `real-time-eligibility-check` | ✅ 100% | ✅ 100% | ❌ Off | ✅ On (25%) |
+
+            ### A/B Test Early Results (T+0)
+            | Metric | Control (Group A) | Variant (Group B) | Improvement |
+            |--------|------------------|-------------------|-------------|
+            | Claims Submission Latency | 118ms | 97ms | 🎉 -18% |
+            | Eligibility Response | 103ms | 41ms | 🎉 -60% |
+            | Error Rate | 0.00% | 0.00% | ✅ Parity |
 
             ## Pipeline Summary
             | Stage | Job | Result | Details |
@@ -396,14 +619,17 @@ jobs:
             | 🔖 Release Readiness | Quality Gate | ✅ | 0 critical findings, 84.3% coverage |
             | 🔖 Release Readiness | Tech Lead Approval | ✅ | Approved |
             | 🧪 DEV | Deploy (3 components) | ✅ | bcbs-az-dev — all pods healthy |
-            | 🧪 DEV | Smoke Tests | ✅ | 7/7 passed, avg 81ms |
+            | 🧪 DEV | Feature Flags | ✅ | All 3 flags → 100% variant |
+            | 🧪 DEV | Smoke Tests | ✅ | 7/7 passed, avg 72ms |
             | 🧪 QA | Deploy (3 components) | ✅ | bcbs-az-qa — all pods healthy |
+            | 🧪 QA | Feature Flags | ✅ | All 3 flags → 100% variant |
             | 🧪 QA | Regression Suite | ✅ | 122/124 (98.4%) |
-            | 🧪 QA | Exit Criteria | ✅ | All 7 criteria met |
+            | 🧪 QA | Exit Criteria | ✅ | All 8 criteria met |
             | 📋 Pre-Impl | Release Manager Approval | ✅ | Approved |
             | 📋 Pre-Impl | ServiceNow CR | ✅ | Created → Assessed → Authorized → Closed |
             | 🚀 PROD | Deploy (3 components) | ✅ | bcbs-az-prod — zero downtime |
-            | 🚀 PROD | Smoke Tests | ✅ | 6/6 passed, avg 67ms |
+            | 🚀 PROD | Feature Flags (A/B) | ✅ | 10% variant — A/B test active |
+            | 🚀 PROD | Smoke Tests | ✅ | 8/8 passed (both A/B groups) |
 
             ## Quality Metrics
             | Metric | Value |
@@ -411,29 +637,13 @@ jobs:
             | SonarQube Coverage | 84.3% |
             | Critical Vulnerabilities | 0 |
             | QA Pass Rate | 98.4% |
-            | PROD P99 Latency | 118ms |
+            | PROD P99 Latency (Group A) | 118ms |
+            | PROD P99 Latency (Group B) | 97ms |
             | Deployment Downtime | 0 minutes |
             | Components Deployed | 3 |
             | Total Pods | 7/7 healthy |
+            | A/B Test Status | 🟢 Active — 10% variant traffic |
+
+            ---
+            > **Next step:** Monitor A/B metrics for 24h. If Group B error rate stays < 0.1%, ramp to 25% via CloudBees Unify Feature Management — no re-deployment needed.
           format: MARKDOWN
-  deploy-to-dev:
-    needs: approval
-    uses: ./.cloudbees/workflows/deploy.yaml
-    with:
-      manifest: ${{ inputs.manifest }}
-      environment: bcbs-az-dev
-    secrets: inherit
-  deploy-to-QA:
-    needs: run-tests-dev
-    uses: ./.cloudbees/workflows/deploy.yaml
-    with:
-      manifest: ${{ inputs.manifest }}
-      environment: bcbs-az-qa
-    secrets: inherit
-  deploy-to-Prod:
-    needs: servicenow-cr
-    uses: ./.cloudbees/workflows/deploy.yaml
-    with:
-      manifest: ${{ inputs.manifest }}
-      environment: bcbs-az-prod
-    secrets: inherit
